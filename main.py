@@ -191,14 +191,22 @@ def main():
     args = parser.parse_args()
     os.makedirs(args.output, exist_ok=True)
 
-    # Load config and authenticate
-    config = load_config(args.config)
-    cookie_string = config.get("cookies", "")
+    # Load cookies — try cookies.txt first (plain text, no escaping needed),
+    # then fall back to config.json
+    cookie_string = ""
+    cookies_txt = os.path.join(os.path.dirname(args.config), "cookies.txt")
+    if os.path.exists(cookies_txt):
+        with open(cookies_txt) as f:
+            cookie_string = f.read().strip()
+    else:
+        config = load_config(args.config)
+        cookie_string = config.get("cookies", "")
+
     if not cookie_string:
         print(
-            "Error: No cookie string in config.json.\n"
-            "Open DevTools on deviantart.com, copy your cookie header value,\n"
-            "and paste it as the \"cookies\" field in config.json.",
+            "Error: No cookie string found.\n"
+            "Create a cookies.txt file and paste your browser cookie header value into it.\n"
+            "(Or use config.json with a \"cookies\" field.)",
             file=sys.stderr,
         )
         sys.exit(1)

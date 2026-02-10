@@ -1,4 +1,5 @@
 config.json
+cookies.txt
 .da_token.json
 output/
 __pycache__/
