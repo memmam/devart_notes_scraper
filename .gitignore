@@ -1,0 +1,5 @@
+config.json
+.da_token.json
+output/
+__pycache__/
+*.pyc
