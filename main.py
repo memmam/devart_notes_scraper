@@ -133,18 +133,21 @@ def run_both(client, folders, output_dir):
     skipped = 0
     errors = 0
 
-    for folder in folders:
+    num_folders = len(folders)
+    for fi, folder in enumerate(folders, 1):
         fname = folder["title"]
         fid = folder["folderId"]
         fcount = folder.get("count", "?")
         start_offset = progress.get(str(fid), 0)
 
         if start_offset == "done":
-            print(f"  {fname}: already complete, skipping")
+            print(f"[{fi}/{num_folders}] {fname}: already complete, skipping")
             continue
 
         if start_offset > 0:
-            print(f"  {fname}: resuming from offset {start_offset}")
+            print(f"[{fi}/{num_folders}] {fname} ({fcount} notes) — resuming from {start_offset}")
+        else:
+            print(f"[{fi}/{num_folders}] {fname} ({fcount} notes)")
 
         count = start_offset
         for note in client.iter_notes(folder_id=fid, start_offset=start_offset):
@@ -166,7 +169,7 @@ def run_both(client, folders, output_dir):
             note_path = os.path.join(notes_dir, f"{nid}.json")
             if os.path.exists(note_path):
                 skipped += 1
-                print(f"\r    {fname}: {count}/{fcount} (skipped existing)", end="", flush=True)
+                print(f"\r    {count}/{fcount} (skipped existing)", end="", flush=True)
                 # Still save progress so we don't re-paginate these
                 progress[str(fid)] = count
                 _save_progress(output_dir, progress)
@@ -185,8 +188,8 @@ def run_both(client, folders, output_dir):
             progress[str(fid)] = count
             _save_progress(output_dir, progress)
 
-            print(f"\r    {fname}: {count}/{fcount}", end="", flush=True)
-        print(f"\r    {fname}: {count} note(s)" + " " * 30)
+            print(f"\r    {count}/{fcount}", end="", flush=True)
+        print(f"\r    done — {count} note(s)" + " " * 30)
 
         # Mark folder complete
         progress[str(fid)] = "done"
