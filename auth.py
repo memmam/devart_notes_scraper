@@ -179,6 +179,5 @@ class DASession:
 
         print(f"  CSRF token acquired.")
         if self.folders:
-            total = sum(f.get("count", 0) for f in self.folders)
-            print(f"  {len(self.folders)} folder(s), {total} total note(s).")
+            print(f"  {len(self.folders)} folder(s) found.")
         print()

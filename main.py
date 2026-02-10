@@ -348,10 +348,11 @@ def main():
         print("No folders to scrape.", file=sys.stderr)
         sys.exit(1)
 
-    total = sum(f.get("count", 0) for f in folders if isinstance(f.get("count"), int))
-    print(f"Scraping {len(folders)} folder(s) ({total} notes):")
+    print(f"Scraping {len(folders)} folder(s):")
     for f in folders:
         print(f"  - {f['title']}: {f.get('count', '?')}")
+    # Note: virtual folders (Unread, Starred, etc.) overlap with real ones.
+    # Duplicates are deduplicated by noteId at the file level.
     print()
 
     if args.mode == "both":
