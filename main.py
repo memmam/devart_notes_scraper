@@ -258,27 +258,43 @@ def main():
     args = parser.parse_args()
     os.makedirs(args.output, exist_ok=True)
 
-    # Load cookies — try cookies.txt first (plain text, no escaping needed),
-    # then fall back to config.json
+    # Load cookies and optional credentials
     cookie_string = ""
+    username = None
+    password = None
+
     cookies_txt = os.path.join(os.path.dirname(args.config), "cookies.txt")
     if os.path.exists(cookies_txt):
         with open(cookies_txt) as f:
             cookie_string = f.read().strip()
-    else:
-        config = load_config(args.config)
-        cookie_string = config.get("cookies", "")
 
-    if not cookie_string:
+    # Load config for credentials (and cookies fallback)
+    config = {}
+    if os.path.exists(args.config):
+        config = load_config(args.config)
+        if not cookie_string:
+            cookie_string = config.get("cookies", "")
+        username = config.get("username")
+        password = config.get("password")
+
+    if not cookie_string and not username:
         print(
-            "Error: No cookie string found.\n"
-            "Create a cookies.txt file and paste your browser cookie header value into it.\n"
-            "(Or use config.json with a \"cookies\" field.)",
+            "Error: No cookie string or credentials found.\n"
+            "Either:\n"
+            "  - Create a cookies.txt with your browser cookie header, or\n"
+            "  - Add \"username\" and \"password\" to config.json, or\n"
+            "  - Add a \"cookies\" field to config.json",
             file=sys.stderr,
         )
         sys.exit(1)
 
-    da = DASession(cookie_string)
+    da = DASession(cookie_string=cookie_string, username=username, password=password)
+
+    # If no cookies, login with credentials
+    if not cookie_string:
+        if not da.login():
+            sys.exit(1)
+
     da.init()
 
     client = DANotesClient(da, request_delay=args.delay)

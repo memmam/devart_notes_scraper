@@ -62,12 +62,17 @@ class DANotesClient:
                     sys.exit(1)
 
         if resp.status_code == 401:
-            print(
-                "Error: 401 Unauthorized. Your cookies may be expired.\n"
-                "Log into DeviantArt in your browser and grab fresh cookies.",
-                file=sys.stderr,
-            )
-            sys.exit(1)
+            # Cookies expired — try to re-login
+            if self.da.relogin():
+                params["csrf_token"] = self.da.csrf_token
+                resp = self.da.session.get(url, params=params, timeout=30)
+            if resp.status_code == 401:
+                print(
+                    "Error: 401 Unauthorized. Could not re-authenticate.\n"
+                    "Log into DeviantArt in your browser and grab fresh cookies.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
 
         resp.raise_for_status()
         return resp.json()

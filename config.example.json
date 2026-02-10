@@ -1,5 +1,8 @@
 {
-    "_comment": "Paste your DeviantArt cookie string here.",
-    "_comment2": "In Chrome: DevTools (F12) -> Network tab -> click any request to deviantart.com -> Headers -> copy the Cookie header value.",
-    "cookies": ""
+    "_comment": "Option 1: Paste your browser cookie string (see cookies.txt alternative too)",
+    "cookies": "",
+
+    "_comment2": "Option 2: DA credentials for auto-login (also used to re-login if cookies expire mid-scrape)",
+    "username": "",
+    "password": ""
 }
