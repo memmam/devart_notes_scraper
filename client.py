@@ -79,6 +79,10 @@ class DANotesClient:
 
     # -- notes listing with pagination --
 
+    def get_note(self, note_id):
+        """Fetch the full content of a single note by ID."""
+        return self._get(f"/{note_id}")
+
     def get_notes_page(self, folder_id, offset=0, limit=24):
         """Fetch a single page of notes from a folder."""
         return self._get("/list", params={

@@ -120,8 +120,34 @@ def _save_progress(output_dir, progress):
         json.dump(progress, f)
 
 
+def _is_full_note(note_path):
+    """Check whether a saved note file contains full content (not just a preview)."""
+    try:
+        with open(note_path, encoding="utf-8") as f:
+            data = json.load(f)
+        # Full notes fetched via /_puppy/notes/{id} have a "body" key at top level
+        # with nested html.markup that is substantially longer than the ~100 char
+        # preview returned by the /list endpoint.
+        body = data.get("body", {})
+        if isinstance(body, dict):
+            markup = body.get("html", {}).get("markup", "")
+            # The list endpoint returns ~100 char previews.
+            # If we have >200 chars or it was fetched with get_note, it's full.
+            if len(markup) > 200:
+                return True
+            # Also check: if "is_full" marker was set by us
+            return data.get("_full", False)
+        return data.get("_full", False)
+    except Exception:
+        return False
+
+
 def run_both(client, folders, output_dir):
-    """Paginate once, writing URL manifest and per-note JSON simultaneously."""
+    """Paginate once, writing URL manifest and per-note JSON simultaneously.
+
+    For each note found in the listing, fetches the full note content via a
+    separate per-note API call before saving.
+    """
     notes_dir = os.path.join(output_dir, "notes")
     os.makedirs(notes_dir, exist_ok=True)
     urls_path = os.path.join(output_dir, "note_urls.txt")
@@ -165,20 +191,32 @@ def run_both(client, folders, output_dir):
                 "folder_id": fid,
             })
 
-            # Skip notes already on disk
+            # Skip notes already on disk IF they have full content
             note_path = os.path.join(notes_dir, f"{nid}.json")
-            if os.path.exists(note_path):
+            if os.path.exists(note_path) and _is_full_note(note_path):
                 skipped += 1
-                print(f"\r    {count}/{fcount} (skipped existing)", end="", flush=True)
-                # Still save progress so we don't re-paginate these
+                print(f"\r    {count}/{fcount} (already have full note)", end="", flush=True)
                 progress[str(fid)] = count
                 _save_progress(output_dir, progress)
                 continue
 
-            # Write note to disk immediately
+            # Fetch full note content
+            try:
+                full_note = client.get_note(nid)
+                full_note["_full"] = True  # marker so we know this is complete
+                full_note["_folder"] = fname
+                full_note["_folder_id"] = fid
+            except Exception as exc:
+                print(f"\n    error fetching {nid}: {exc}", file=sys.stderr)
+                errors += 1
+                progress[str(fid)] = count
+                _save_progress(output_dir, progress)
+                continue
+
+            # Write full note to disk
             try:
                 with open(note_path, "w", encoding="utf-8") as f:
-                    json.dump(note, f, indent=2, ensure_ascii=False)
+                    json.dump(full_note, f, indent=2, ensure_ascii=False)
                 saved += 1
             except Exception as exc:
                 print(f"\n    error saving {nid}: {exc}", file=sys.stderr)
@@ -230,29 +268,49 @@ def run_extract(client, folders, output_dir):
     os.makedirs(notes_dir, exist_ok=True)
 
     saved = 0
+    skipped = 0
     errors = 0
 
-    for folder in folders:
+    num_folders = len(folders)
+    for fi, folder in enumerate(folders, 1):
         fname = folder["title"]
         fid = folder["folderId"]
         fcount = folder.get("count", "?")
+
+        print(f"[{fi}/{num_folders}] {fname} ({fcount} notes)")
 
         count = 0
         for note in client.iter_notes(folder_id=fid):
             nid = note["noteId"]
             count += 1
+
+            note_path = os.path.join(notes_dir, f"{nid}.json")
+            if os.path.exists(note_path) and _is_full_note(note_path):
+                skipped += 1
+                print(f"\r    {count}/{fcount} (already have full note)", end="", flush=True)
+                continue
+
             try:
-                path = os.path.join(notes_dir, f"{nid}.json")
-                with open(path, "w", encoding="utf-8") as f:
-                    json.dump(note, f, indent=2, ensure_ascii=False)
+                full_note = client.get_note(nid)
+                full_note["_full"] = True
+                full_note["_folder"] = fname
+                full_note["_folder_id"] = fid
+            except Exception as exc:
+                print(f"\n    error fetching {nid}: {exc}", file=sys.stderr)
+                errors += 1
+                continue
+
+            try:
+                with open(note_path, "w", encoding="utf-8") as f:
+                    json.dump(full_note, f, indent=2, ensure_ascii=False)
                 saved += 1
             except Exception as exc:
                 print(f"\n    error saving {nid}: {exc}", file=sys.stderr)
                 errors += 1
-            print(f"\r    {fname}: {count}/{fcount} saved", end="", flush=True)
-        print(f"\r    {fname}: {count} note(s) saved" + " " * 20)
+            print(f"\r    {count}/{fcount}", end="", flush=True)
+        print(f"\r    done — {count} note(s)" + " " * 30)
 
-    print(f"\nDone. {saved} saved, {errors} error(s).")
+    print(f"\nDone. {saved} saved, {skipped} already complete, {errors} error(s).")
     print(f"  Notes -> {notes_dir}")
 
 
