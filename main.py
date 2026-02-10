@@ -92,10 +92,10 @@ def run_list(client, folders, output_dir):
         print(f"\r    {fname}: {count} note(s) collected" + " " * 20)
 
     # Write files
-    with open(urls_path, "w") as f:
+    with open(urls_path, "w", encoding="utf-8") as f:
         for e in entries:
             f.write(f"{e['url']}\n")
-    with open(json_path, "w") as f:
+    with open(json_path, "w", encoding="utf-8") as f:
         json.dump(entries, f, indent=2, ensure_ascii=False)
 
     print(f"\n{len(entries)} note URL(s) total.")
@@ -143,7 +143,7 @@ def run_both(client, folders, output_dir):
             # Write note to disk immediately
             try:
                 path = os.path.join(notes_dir, f"{nid}.json")
-                with open(path, "w") as f:
+                with open(path, "w", encoding="utf-8") as f:
                     json.dump(note, f, indent=2, ensure_ascii=False)
                 saved += 1
             except Exception as exc:
@@ -154,10 +154,10 @@ def run_both(client, folders, output_dir):
         print(f"\r    {fname}: {count} note(s)" + " " * 20)
 
     # Write URL files
-    with open(urls_path, "w") as f:
+    with open(urls_path, "w", encoding="utf-8") as f:
         for e in entries:
             f.write(f"{e['url']}\n")
-    with open(json_path, "w") as f:
+    with open(json_path, "w", encoding="utf-8") as f:
         json.dump(entries, f, indent=2, ensure_ascii=False)
 
     print(f"\n{len(entries)} note(s) total. {saved} saved, {errors} error(s).")
@@ -189,7 +189,7 @@ def run_extract(client, folders, output_dir):
             count += 1
             try:
                 path = os.path.join(notes_dir, f"{nid}.json")
-                with open(path, "w") as f:
+                with open(path, "w", encoding="utf-8") as f:
                     json.dump(note, f, indent=2, ensure_ascii=False)
                 saved += 1
             except Exception as exc:
