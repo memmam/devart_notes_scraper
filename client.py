@@ -48,12 +48,18 @@ class DANotesClient:
         if resp.status_code == 400:
             body = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
             if body.get("errorDetails", {}).get("csrf"):
-                print(
-                    "Error: CSRF token rejected. Your session may have expired.\n"
-                    "Refresh the notes page in your browser and update your cookies/CSRF.",
-                    file=sys.stderr,
-                )
-                sys.exit(1)
+                # CSRF expired — re-fetch the notes page to get a fresh one
+                print("\n    CSRF token expired, refreshing...", flush=True)
+                self.da.init()
+                params["csrf_token"] = self.da.csrf_token
+                resp = self.da.session.get(url, params=params, timeout=30)
+                if resp.status_code == 400:
+                    print(
+                        "Error: CSRF token still rejected after refresh.\n"
+                        "Your cookies may be expired — grab fresh ones from your browser.",
+                        file=sys.stderr,
+                    )
+                    sys.exit(1)
 
         if resp.status_code == 401:
             print(
