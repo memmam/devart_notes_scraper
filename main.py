@@ -2,15 +2,17 @@
 """DeviantArt Legacy Notes Scraper.
 
 Two execution modes:
-  list    – Paginate through every note folder and collect a URL/ID for each note.
-  extract – Download the full content of each note and save it locally as JSON.
+  list    – Paginate through note folders and collect a URL for every note.
+  extract – Download the full content of every note and save it locally.
   both    – Run list first, then extract (default).
+
+Authentication uses browser cookies. See config.example.json.
 
 Usage:
   python main.py --mode list
   python main.py --mode extract
   python main.py --mode both
-  python main.py --mode extract --from-list output/note_urls.json
+  python main.py --mode list --folders 1 2
 """
 
 import argparse
@@ -18,17 +20,19 @@ import json
 import os
 import sys
 
-from auth import get_access_token
+from auth import DASession
 from client import DANotesClient
 
-NOTES_WEB_BASE = "https://www.deviantart.com/notifications/notes"
+# Folders with negative IDs are virtual views (Unread, Starred, Drafts, Spam).
+# They overlap with real folders, so skip them by default to avoid duplicates.
+VIRTUAL_FOLDER_IDS = {-1, -2, -3, -4}
 
 
 def load_config(path):
     if not os.path.exists(path):
         print(
             f"Config file not found: {path}\n"
-            "Copy config.example.json to config.json and fill in your credentials.",
+            "Copy config.example.json to config.json and fill in your cookie string.",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -36,44 +40,61 @@ def load_config(path):
         return json.load(f)
 
 
+def resolve_folders(da_session, requested_ids):
+    """Return the list of folders to scrape.
+
+    If specific IDs were requested, use those. Otherwise use all real
+    (non-virtual) folders from the page's initial state.
+    """
+    all_folders = da_session.folders
+    if requested_ids:
+        by_id = {f["folderId"]: f for f in all_folders}
+        folders = []
+        for fid in requested_ids:
+            if fid in by_id:
+                folders.append(by_id[fid])
+            else:
+                folders.append({"folderId": fid, "title": f"Folder {fid}", "count": "?"})
+        return folders
+
+    return [f for f in all_folders if f["folderId"] not in VIRTUAL_FOLDER_IDS]
+
+
 # ---------------------------------------------------------------------------
 # Mode 1: list
 # ---------------------------------------------------------------------------
 
-def run_list(client, output_dir):
-    """Scrape every note folder and write a URL manifest."""
-    print("Fetching note folders...")
-    folders_resp = client.get_folders()
-    folders = folders_resp.get("results", [])
-    print(f"  Found {len(folders)} folder(s).\n")
-
+def run_list(client, folders, output_dir):
+    """Scrape every specified folder and write a URL manifest."""
     entries = []
     for folder in folders:
-        fname = folder.get("title", "Unknown")
-        fid = folder.get("folderid")
+        fname = folder["title"]
+        fid = folder["folderId"]
+        fcount = folder.get("count", "?")
+        print(f"  {fname} (id={fid}, ~{fcount} notes)")
+
         count = 0
         for note in client.iter_notes(folder_id=fid):
-            nid = note.get("noteid")
             entry = {
-                "note_id": nid,
-                "url": f"{NOTES_WEB_BASE}/#view={nid}",
+                "note_id": note["noteId"],
+                "url": note.get("url", ""),
                 "subject": note.get("subject", ""),
-                "sender": note.get("user", {}).get("username", ""),
-                "ts": note.get("ts"),
+                "sender": note.get("sender", {}).get("username", ""),
+                "timestamp": note.get("timestamp", ""),
                 "folder": fname,
-                "unread": note.get("unread", False),
+                "folder_id": fid,
             }
             entries.append(entry)
             count += 1
-        print(f"  {fname}: {count} note(s)")
+        print(f"    -> {count} note(s) collected")
 
-    # Write plain URL list (one per line)
+    # Plain URL list
     urls_path = os.path.join(output_dir, "note_urls.txt")
     with open(urls_path, "w") as f:
         for e in entries:
             f.write(f"{e['url']}\n")
 
-    # Write detailed JSON manifest
+    # Detailed JSON manifest
     json_path = os.path.join(output_dir, "note_urls.json")
     with open(json_path, "w") as f:
         json.dump(entries, f, indent=2, ensure_ascii=False)
@@ -88,44 +109,36 @@ def run_list(client, output_dir):
 # Mode 2: extract
 # ---------------------------------------------------------------------------
 
-def run_extract(client, output_dir, note_list=None):
+def run_extract(client, folders, output_dir):
     """Download full note content and save each note as a JSON file."""
     notes_dir = os.path.join(output_dir, "notes")
     os.makedirs(notes_dir, exist_ok=True)
 
-    # If no pre-built list, discover notes now
-    if note_list is None:
-        print("No URL list supplied — discovering notes first...\n")
-        note_list = []
-        folders_resp = client.get_folders()
-        for folder in folders_resp.get("results", []):
-            for note in client.iter_notes(folder_id=folder.get("folderid")):
-                note_list.append({
-                    "note_id": note.get("noteid"),
-                    "folder": folder.get("title", "Unknown"),
-                })
-
-    total = len(note_list)
-    if total == 0:
-        print("Nothing to extract.")
-        return
-
-    print(f"Extracting {total} note(s)...\n")
+    saved = 0
     errors = 0
-    for i, entry in enumerate(note_list, 1):
-        nid = entry["note_id"]
-        label = entry.get("subject") or entry.get("folder") or str(nid)
-        print(f"  [{i}/{total}] {nid} ({label})")
-        try:
-            data = client.get_note(nid)
-            path = os.path.join(notes_dir, f"{nid}.json")
-            with open(path, "w") as f:
-                json.dump(data, f, indent=2, ensure_ascii=False)
-        except Exception as exc:
-            print(f"    -> error: {exc}", file=sys.stderr)
-            errors += 1
 
-    print(f"\nDone. {total - errors} saved, {errors} error(s).")
+    for folder in folders:
+        fname = folder["title"]
+        fid = folder["folderId"]
+        fcount = folder.get("count", "?")
+        print(f"  {fname} (id={fid}, ~{fcount} notes)")
+
+        count = 0
+        for note in client.iter_notes(folder_id=fid):
+            nid = note["noteId"]
+            subj = note.get("subject", "(no subject)")
+            count += 1
+            try:
+                path = os.path.join(notes_dir, f"{nid}.json")
+                with open(path, "w") as f:
+                    json.dump(note, f, indent=2, ensure_ascii=False)
+                saved += 1
+            except Exception as exc:
+                print(f"    error saving {nid}: {exc}", file=sys.stderr)
+                errors += 1
+        print(f"    -> {count} note(s) saved")
+
+    print(f"\nDone. {saved} saved, {errors} error(s).")
     print(f"  Notes -> {notes_dir}")
 
 
@@ -142,7 +155,7 @@ def main():
             "  python main.py --mode list\n"
             "  python main.py --mode extract\n"
             "  python main.py --mode both\n"
-            "  python main.py --mode extract --from-list output/note_urls.json\n"
+            "  python main.py --mode list --folders 1 2\n"
         ),
     )
     parser.add_argument(
@@ -168,30 +181,45 @@ def main():
         help="seconds between API requests (default: 1.0)",
     )
     parser.add_argument(
-        "--from-list",
-        metavar="JSON_FILE",
-        help="extract notes listed in a previously generated note_urls.json",
+        "--folders",
+        type=int,
+        nargs="+",
+        metavar="ID",
+        help="only scrape these folder IDs (default: all real folders)",
     )
 
     args = parser.parse_args()
     os.makedirs(args.output, exist_ok=True)
 
-    # Authenticate
+    # Load config and authenticate
     config = load_config(args.config)
-    token = get_access_token(config)
-    client = DANotesClient(token, request_delay=args.delay)
+    cookie_string = config.get("cookies", "")
+    if not cookie_string:
+        print(
+            "Error: No cookie string in config.json.\n"
+            "Open DevTools on deviantart.com, copy your cookie header value,\n"
+            "and paste it as the \"cookies\" field in config.json.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
-    # Dispatch
-    note_list = None
+    da = DASession(cookie_string)
+    da.init()
+
+    client = DANotesClient(da, request_delay=args.delay)
+    folders = resolve_folders(da, args.folders)
+
+    if not folders:
+        print("No folders to scrape.", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"Scraping {len(folders)} folder(s)...\n")
 
     if args.mode in ("list", "both"):
-        note_list = run_list(client, args.output)
+        run_list(client, folders, args.output)
 
     if args.mode in ("extract", "both"):
-        if args.from_list:
-            with open(args.from_list) as f:
-                note_list = json.load(f)
-        run_extract(client, args.output, note_list=note_list)
+        run_extract(client, folders, args.output)
 
 
 if __name__ == "__main__":

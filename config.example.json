@@ -1,11 +1,5 @@
 {
-    "_comment": "Auth option 1: Full OAuth2 flow (register an app at https://www.deviantart.com/developers/apps)",
-    "client_id": "",
-    "client_secret": "",
-
-    "_comment2": "Auth option 2: Paste an access token directly (grab from browser devtools Network tab)",
-    "access_token": "",
-
-    "_comment3": "Optional: set the OAuth2 callback port (default 8080)",
-    "callback_port": 8080
+    "_comment": "Paste your DeviantArt cookie string here.",
+    "_comment2": "In Chrome: DevTools (F12) -> Network tab -> click any request to deviantart.com -> Headers -> copy the Cookie header value.",
+    "cookies": ""
 }

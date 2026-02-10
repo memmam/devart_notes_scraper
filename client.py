@@ -1,62 +1,74 @@
-"""DeviantArt Notes API client."""
+"""DeviantArt Notes API client.
+
+Uses the internal /_puppy/notes/ endpoints with cookie auth + CSRF token.
+"""
 
 import sys
 import time
 
-import requests
+from auth import DA_MINOR_VERSION
 
-API_BASE = "https://www.deviantart.com/api/v1/oauth2"
+API_BASE = "https://www.deviantart.com/_puppy/notes"
 
 
 class DANotesClient:
-    """Thin wrapper around the DeviantArt OAuth2 notes endpoints."""
+    """Wraps the DA internal notes API with pagination support."""
 
-    def __init__(self, access_token, request_delay=1.0):
-        self.session = requests.Session()
-        self.session.headers["Authorization"] = f"Bearer {access_token}"
+    def __init__(self, da_session, request_delay=1.0):
+        self.da = da_session
         self.delay = request_delay
 
     def _get(self, path, params=None):
-        time.sleep(self.delay)
+        if self.delay > 0:
+            time.sleep(self.delay)
+
+        if params is None:
+            params = {}
+        params["da_minor_version"] = DA_MINOR_VERSION
+        params["csrf_token"] = self.da.csrf_token
+
         url = f"{API_BASE}{path}"
-        resp = self.session.get(url, params=params)
+        resp = self.da.session.get(url, params=params)
+
+        if resp.status_code == 400:
+            body = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
+            if body.get("errorDetails", {}).get("csrf"):
+                print(
+                    "Error: CSRF token rejected. Your session may have expired.\n"
+                    "Refresh the notes page in your browser and update your cookies/CSRF.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+
         if resp.status_code == 401:
             print(
-                "Error: 401 Unauthorized. Your access token may be expired or invalid.",
+                "Error: 401 Unauthorized. Your cookies may be expired.\n"
+                "Log into DeviantArt in your browser and grab fresh cookies.",
                 file=sys.stderr,
             )
             sys.exit(1)
+
         resp.raise_for_status()
         return resp.json()
 
-    # -- folders --
+    # -- notes listing with pagination --
 
-    def get_folders(self):
-        """Return the list of note folders."""
-        return self._get("/notes/folders")
-
-    # -- notes listing --
-
-    def get_notes_page(self, folder_id=None, offset=0, limit=25):
+    def get_notes_page(self, folder_id, offset=0, limit=24):
         """Fetch a single page of notes from a folder."""
-        params = {"offset": offset, "limit": limit}
-        if folder_id is not None:
-            params["folderid"] = folder_id
-        return self._get("/notes", params=params)
+        return self._get("/list", params={
+            "folderid": folder_id,
+            "offset": offset,
+            "limit": limit,
+        })
 
-    def iter_notes(self, folder_id=None, limit=25):
-        """Yield every note summary in a folder, handling pagination."""
+    def iter_notes(self, folder_id, limit=24):
+        """Yield every note in a folder, handling pagination automatically."""
         offset = 0
         while True:
-            page = self.get_notes_page(folder_id=folder_id, offset=offset, limit=limit)
-            for note in page.get("results", []):
+            page = self.get_notes_page(folder_id, offset=offset, limit=limit)
+            results = page.get("results", [])
+            for note in results:
                 yield note
-            if not page.get("has_more"):
+            if not page.get("hasMore"):
                 break
-            offset = page.get("next_offset", offset + limit)
-
-    # -- single note --
-
-    def get_note(self, note_id):
-        """Fetch the full content of a single note."""
-        return self._get(f"/notes/{note_id}")
+            offset = page.get("nextOffset", offset + len(results))
