@@ -67,11 +67,13 @@ def resolve_folders(da_session, requested_ids):
 def run_list(client, folders, output_dir):
     """Scrape every specified folder and write a URL manifest."""
     entries = []
+    urls_path = os.path.join(output_dir, "note_urls.txt")
+    json_path = os.path.join(output_dir, "note_urls.json")
+
     for folder in folders:
         fname = folder["title"]
         fid = folder["folderId"]
         fcount = folder.get("count", "?")
-        print(f"  {fname} (id={fid}, ~{fcount} notes)")
 
         count = 0
         for note in client.iter_notes(folder_id=fid):
@@ -86,16 +88,13 @@ def run_list(client, folders, output_dir):
             }
             entries.append(entry)
             count += 1
-        print(f"    -> {count} note(s) collected")
+            print(f"\r    {fname}: {count}/{fcount} notes", end="", flush=True)
+        print(f"\r    {fname}: {count} note(s) collected" + " " * 20)
 
-    # Plain URL list
-    urls_path = os.path.join(output_dir, "note_urls.txt")
+    # Write files
     with open(urls_path, "w") as f:
         for e in entries:
             f.write(f"{e['url']}\n")
-
-    # Detailed JSON manifest
-    json_path = os.path.join(output_dir, "note_urls.json")
     with open(json_path, "w") as f:
         json.dump(entries, f, indent=2, ensure_ascii=False)
 
@@ -103,6 +102,68 @@ def run_list(client, folders, output_dir):
     print(f"  URLs  -> {urls_path}")
     print(f"  JSON  -> {json_path}")
     return entries
+
+
+# ---------------------------------------------------------------------------
+# Mode: both (single pass — list + extract in one pagination sweep)
+# ---------------------------------------------------------------------------
+
+def run_both(client, folders, output_dir):
+    """Paginate once, writing URL manifest and per-note JSON simultaneously."""
+    notes_dir = os.path.join(output_dir, "notes")
+    os.makedirs(notes_dir, exist_ok=True)
+    urls_path = os.path.join(output_dir, "note_urls.txt")
+    json_path = os.path.join(output_dir, "note_urls.json")
+
+    entries = []
+    saved = 0
+    errors = 0
+
+    for folder in folders:
+        fname = folder["title"]
+        fid = folder["folderId"]
+        fcount = folder.get("count", "?")
+
+        count = 0
+        for note in client.iter_notes(folder_id=fid):
+            nid = note["noteId"]
+            count += 1
+
+            # Collect URL entry
+            entries.append({
+                "note_id": nid,
+                "url": note.get("url", ""),
+                "subject": note.get("subject", ""),
+                "sender": note.get("sender", {}).get("username", ""),
+                "timestamp": note.get("timestamp", ""),
+                "folder": fname,
+                "folder_id": fid,
+            })
+
+            # Write note to disk immediately
+            try:
+                path = os.path.join(notes_dir, f"{nid}.json")
+                with open(path, "w") as f:
+                    json.dump(note, f, indent=2, ensure_ascii=False)
+                saved += 1
+            except Exception as exc:
+                print(f"\n    error saving {nid}: {exc}", file=sys.stderr)
+                errors += 1
+
+            print(f"\r    {fname}: {count}/{fcount}", end="", flush=True)
+        print(f"\r    {fname}: {count} note(s)" + " " * 20)
+
+    # Write URL files
+    with open(urls_path, "w") as f:
+        for e in entries:
+            f.write(f"{e['url']}\n")
+    with open(json_path, "w") as f:
+        json.dump(entries, f, indent=2, ensure_ascii=False)
+
+    print(f"\n{len(entries)} note(s) total. {saved} saved, {errors} error(s).")
+    print(f"  URLs  -> {urls_path}")
+    print(f"  JSON  -> {json_path}")
+    print(f"  Notes -> {notes_dir}")
 
 
 # ---------------------------------------------------------------------------
@@ -121,12 +182,10 @@ def run_extract(client, folders, output_dir):
         fname = folder["title"]
         fid = folder["folderId"]
         fcount = folder.get("count", "?")
-        print(f"  {fname} (id={fid}, ~{fcount} notes)")
 
         count = 0
         for note in client.iter_notes(folder_id=fid):
             nid = note["noteId"]
-            subj = note.get("subject", "(no subject)")
             count += 1
             try:
                 path = os.path.join(notes_dir, f"{nid}.json")
@@ -134,9 +193,10 @@ def run_extract(client, folders, output_dir):
                     json.dump(note, f, indent=2, ensure_ascii=False)
                 saved += 1
             except Exception as exc:
-                print(f"    error saving {nid}: {exc}", file=sys.stderr)
+                print(f"\n    error saving {nid}: {exc}", file=sys.stderr)
                 errors += 1
-        print(f"    -> {count} note(s) saved")
+            print(f"\r    {fname}: {count}/{fcount} saved", end="", flush=True)
+        print(f"\r    {fname}: {count} note(s) saved" + " " * 20)
 
     print(f"\nDone. {saved} saved, {errors} error(s).")
     print(f"  Notes -> {notes_dir}")
@@ -223,10 +283,12 @@ def main():
 
     print(f"Scraping {len(folders)} folder(s)...\n")
 
-    if args.mode in ("list", "both"):
+    if args.mode == "both":
+        # Single pass: paginate once, write both URL list and per-note JSON files
+        run_both(client, folders, args.output)
+    elif args.mode == "list":
         run_list(client, folders, args.output)
-
-    if args.mode in ("extract", "both"):
+    elif args.mode == "extract":
         run_extract(client, folders, args.output)
 
 
