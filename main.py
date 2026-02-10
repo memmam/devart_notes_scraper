@@ -120,33 +120,11 @@ def _save_progress(output_dir, progress):
         json.dump(progress, f)
 
 
-def _is_full_note(note_path):
-    """Check whether a saved note file contains full content (not just a preview)."""
-    try:
-        with open(note_path, encoding="utf-8") as f:
-            data = json.load(f)
-        # Full notes fetched via /_puppy/notes/{id} have a "body" key at top level
-        # with nested html.markup that is substantially longer than the ~100 char
-        # preview returned by the /list endpoint.
-        body = data.get("body", {})
-        if isinstance(body, dict):
-            markup = body.get("html", {}).get("markup", "")
-            # The list endpoint returns ~100 char previews.
-            # If we have >200 chars or it was fetched with get_note, it's full.
-            if len(markup) > 200:
-                return True
-            # Also check: if "is_full" marker was set by us
-            return data.get("_full", False)
-        return data.get("_full", False)
-    except Exception:
-        return False
-
-
 def run_both(client, folders, output_dir):
     """Paginate once, writing URL manifest and per-note JSON simultaneously.
 
-    For each note found in the listing, fetches the full note content via a
-    separate per-note API call before saving.
+    The list endpoint returns full note content (body in body.html.markup),
+    so no separate per-note fetch is needed.
     """
     notes_dir = os.path.join(output_dir, "notes")
     os.makedirs(notes_dir, exist_ok=True)
@@ -176,7 +154,6 @@ def run_both(client, folders, output_dir):
             print(f"[{fi}/{num_folders}] {fname} ({fcount} notes)")
 
         count = start_offset
-        consecutive_errors = 0
         for note in client.iter_notes(folder_id=fid, start_offset=start_offset):
             nid = note["noteId"]
             count += 1
@@ -192,47 +169,19 @@ def run_both(client, folders, output_dir):
                 "folder_id": fid,
             })
 
-            # Skip notes already on disk IF they have full content
+            # Skip notes already on disk
             note_path = os.path.join(notes_dir, f"{nid}.json")
-            if os.path.exists(note_path) and _is_full_note(note_path):
+            if os.path.exists(note_path):
                 skipped += 1
-                consecutive_errors = 0
-                print(f"\r    {count}/{fcount} (already have full note)", end="", flush=True)
+                print(f"\r    {count}/{fcount} (skipped existing)", end="", flush=True)
                 progress[str(fid)] = count
                 _save_progress(output_dir, progress)
                 continue
 
-            # Fetch full note content
-            try:
-                full_note = client.get_note(nid)
-                full_note["_full"] = True  # marker so we know this is complete
-                full_note["_folder"] = fname
-                full_note["_folder_id"] = fid
-                consecutive_errors = 0
-            except Exception as exc:
-                print(f"\n    error fetching {nid}: {exc}", file=sys.stderr)
-                errors += 1
-                consecutive_errors += 1
-                progress[str(fid)] = count
-                _save_progress(output_dir, progress)
-                if consecutive_errors >= 5:
-                    print(
-                        "\n    5 consecutive fetch errors — the per-note endpoint may be wrong.\n"
-                        "    Stopping. Saved notes from list endpoint as fallback.",
-                        file=sys.stderr,
-                    )
-                    # Save what we have from the list as fallback
-                    fallback_path = os.path.join(notes_dir, f"{nid}.json")
-                    if not os.path.exists(fallback_path):
-                        with open(fallback_path, "w", encoding="utf-8") as f:
-                            json.dump(note, f, indent=2, ensure_ascii=False)
-                    break
-                continue
-
-            # Write full note to disk
+            # Write note to disk
             try:
                 with open(note_path, "w", encoding="utf-8") as f:
-                    json.dump(full_note, f, indent=2, ensure_ascii=False)
+                    json.dump(note, f, indent=2, ensure_ascii=False)
                 saved += 1
             except Exception as exc:
                 print(f"\n    error saving {nid}: {exc}", file=sys.stderr)
@@ -279,7 +228,10 @@ def run_both(client, folders, output_dir):
 # ---------------------------------------------------------------------------
 
 def run_extract(client, folders, output_dir):
-    """Download full note content and save each note as a JSON file."""
+    """Download note content and save each note as a JSON file.
+
+    The list endpoint returns full note content (body in body.html.markup).
+    """
     notes_dir = os.path.join(output_dir, "notes")
     os.makedirs(notes_dir, exist_ok=True)
 
@@ -296,40 +248,19 @@ def run_extract(client, folders, output_dir):
         print(f"[{fi}/{num_folders}] {fname} ({fcount} notes)")
 
         count = 0
-        consecutive_errors = 0
         for note in client.iter_notes(folder_id=fid):
             nid = note["noteId"]
             count += 1
 
             note_path = os.path.join(notes_dir, f"{nid}.json")
-            if os.path.exists(note_path) and _is_full_note(note_path):
+            if os.path.exists(note_path):
                 skipped += 1
-                consecutive_errors = 0
-                print(f"\r    {count}/{fcount} (already have full note)", end="", flush=True)
-                continue
-
-            try:
-                full_note = client.get_note(nid)
-                full_note["_full"] = True
-                full_note["_folder"] = fname
-                full_note["_folder_id"] = fid
-                consecutive_errors = 0
-            except Exception as exc:
-                print(f"\n    error fetching {nid}: {exc}", file=sys.stderr)
-                errors += 1
-                consecutive_errors += 1
-                if consecutive_errors >= 5:
-                    print(
-                        "\n    5 consecutive fetch errors — the per-note endpoint may be wrong.\n"
-                        "    Stopping this folder.",
-                        file=sys.stderr,
-                    )
-                    break
+                print(f"\r    {count}/{fcount} (skipped existing)", end="", flush=True)
                 continue
 
             try:
                 with open(note_path, "w", encoding="utf-8") as f:
-                    json.dump(full_note, f, indent=2, ensure_ascii=False)
+                    json.dump(note, f, indent=2, ensure_ascii=False)
                 saved += 1
             except Exception as exc:
                 print(f"\n    error saving {nid}: {exc}", file=sys.stderr)
@@ -337,7 +268,7 @@ def run_extract(client, folders, output_dir):
             print(f"\r    {count}/{fcount}", end="", flush=True)
         print(f"\r    done — {count} note(s)" + " " * 30)
 
-    print(f"\nDone. {saved} saved, {skipped} already complete, {errors} error(s).")
+    print(f"\nDone. {saved} saved, {skipped} already on disk, {errors} error(s).")
     print(f"  Notes -> {notes_dir}")
 
 
