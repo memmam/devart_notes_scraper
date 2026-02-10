@@ -6,9 +6,13 @@ Uses the internal /_puppy/notes/ endpoints with cookie auth + CSRF token.
 import sys
 import time
 
+import requests
+
 from auth import DA_MINOR_VERSION
 
 API_BASE = "https://www.deviantart.com/_puppy/notes"
+MAX_RETRIES = 4
+RETRY_BACKOFF = [2, 4, 8, 16]
 
 
 class DANotesClient:
@@ -28,7 +32,18 @@ class DANotesClient:
         params["csrf_token"] = self.da.csrf_token
 
         url = f"{API_BASE}{path}"
-        resp = self.da.session.get(url, params=params)
+
+        for attempt in range(MAX_RETRIES + 1):
+            try:
+                resp = self.da.session.get(url, params=params, timeout=30)
+                break
+            except (requests.ConnectionError, requests.Timeout) as exc:
+                if attempt < MAX_RETRIES:
+                    wait = RETRY_BACKOFF[attempt]
+                    print(f"\n    Connection error, retrying in {wait}s... ({exc.__class__.__name__})", flush=True)
+                    time.sleep(wait)
+                else:
+                    raise
 
         if resp.status_code == 400:
             body = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}

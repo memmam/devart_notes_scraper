@@ -117,6 +117,7 @@ def run_both(client, folders, output_dir):
 
     entries = []
     saved = 0
+    skipped = 0
     errors = 0
 
     for folder in folders:
@@ -140,10 +141,16 @@ def run_both(client, folders, output_dir):
                 "folder_id": fid,
             })
 
+            # Skip notes already on disk (resume support)
+            note_path = os.path.join(notes_dir, f"{nid}.json")
+            if os.path.exists(note_path):
+                skipped += 1
+                print(f"\r    {fname}: {count}/{fcount} (skipped existing)", end="", flush=True)
+                continue
+
             # Write note to disk immediately
             try:
-                path = os.path.join(notes_dir, f"{nid}.json")
-                with open(path, "w", encoding="utf-8") as f:
+                with open(note_path, "w", encoding="utf-8") as f:
                     json.dump(note, f, indent=2, ensure_ascii=False)
                 saved += 1
             except Exception as exc:
@@ -151,7 +158,7 @@ def run_both(client, folders, output_dir):
                 errors += 1
 
             print(f"\r    {fname}: {count}/{fcount}", end="", flush=True)
-        print(f"\r    {fname}: {count} note(s)" + " " * 20)
+        print(f"\r    {fname}: {count} note(s)" + " " * 30)
 
     # Write URL files
     with open(urls_path, "w", encoding="utf-8") as f:
@@ -160,7 +167,7 @@ def run_both(client, folders, output_dir):
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump(entries, f, indent=2, ensure_ascii=False)
 
-    print(f"\n{len(entries)} note(s) total. {saved} saved, {errors} error(s).")
+    print(f"\n{len(entries)} note(s) total. {saved} new, {skipped} already on disk, {errors} error(s).")
     print(f"  URLs  -> {urls_path}")
     print(f"  JSON  -> {json_path}")
     print(f"  Notes -> {notes_dir}")
