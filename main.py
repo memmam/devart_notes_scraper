@@ -23,11 +23,6 @@ import sys
 from auth import DASession
 from client import DANotesClient
 
-# Folders with negative IDs are virtual views (Unread, Starred, Drafts, Spam).
-# They overlap with real folders, so skip them by default to avoid duplicates.
-VIRTUAL_FOLDER_IDS = {-1, -2, -3, -4}
-
-
 def load_config(path):
     if not os.path.exists(path):
         print(
@@ -43,8 +38,9 @@ def load_config(path):
 def resolve_folders(da_session, requested_ids):
     """Return the list of folders to scrape.
 
-    If specific IDs were requested, use those. Otherwise use all real
-    (non-virtual) folders from the page's initial state.
+    If specific IDs were requested, use those. Otherwise use all folders.
+    Notes are saved as {noteId}.json, so duplicates across folders are
+    deduplicated automatically at the file level.
     """
     all_folders = da_session.folders
     if requested_ids:
@@ -57,7 +53,7 @@ def resolve_folders(da_session, requested_ids):
                 folders.append({"folderId": fid, "title": f"Folder {fid}", "count": "?"})
         return folders
 
-    return [f for f in all_folders if f["folderId"] not in VIRTUAL_FOLDER_IDS]
+    return all_folders
 
 
 # ---------------------------------------------------------------------------
