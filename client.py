@@ -87,9 +87,9 @@ class DANotesClient:
             "limit": limit,
         })
 
-    def iter_notes(self, folder_id, limit=24):
+    def iter_notes(self, folder_id, limit=24, start_offset=0):
         """Yield every note in a folder, handling pagination automatically."""
-        offset = 0
+        offset = start_offset
         while True:
             page = self.get_notes_page(folder_id, offset=offset, limit=limit)
             results = page.get("results", [])

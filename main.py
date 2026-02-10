@@ -108,6 +108,22 @@ def run_list(client, folders, output_dir):
 # Mode: both (single pass — list + extract in one pagination sweep)
 # ---------------------------------------------------------------------------
 
+def _load_progress(output_dir):
+    """Load saved pagination offsets from a previous interrupted run."""
+    path = os.path.join(output_dir, ".progress.json")
+    if os.path.exists(path):
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    return {}
+
+
+def _save_progress(output_dir, progress):
+    """Save pagination offsets so we can resume later."""
+    path = os.path.join(output_dir, ".progress.json")
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(progress, f)
+
+
 def run_both(client, folders, output_dir):
     """Paginate once, writing URL manifest and per-note JSON simultaneously."""
     notes_dir = os.path.join(output_dir, "notes")
@@ -115,6 +131,7 @@ def run_both(client, folders, output_dir):
     urls_path = os.path.join(output_dir, "note_urls.txt")
     json_path = os.path.join(output_dir, "note_urls.json")
 
+    progress = _load_progress(output_dir)
     entries = []
     saved = 0
     skipped = 0
@@ -124,9 +141,17 @@ def run_both(client, folders, output_dir):
         fname = folder["title"]
         fid = folder["folderId"]
         fcount = folder.get("count", "?")
+        start_offset = progress.get(str(fid), 0)
 
-        count = 0
-        for note in client.iter_notes(folder_id=fid):
+        if start_offset == "done":
+            print(f"  {fname}: already complete, skipping")
+            continue
+
+        if start_offset > 0:
+            print(f"  {fname}: resuming from offset {start_offset}")
+
+        count = start_offset
+        for note in client.iter_notes(folder_id=fid, start_offset=start_offset):
             nid = note["noteId"]
             count += 1
 
@@ -141,11 +166,14 @@ def run_both(client, folders, output_dir):
                 "folder_id": fid,
             })
 
-            # Skip notes already on disk (resume support)
+            # Skip notes already on disk
             note_path = os.path.join(notes_dir, f"{nid}.json")
             if os.path.exists(note_path):
                 skipped += 1
                 print(f"\r    {fname}: {count}/{fcount} (skipped existing)", end="", flush=True)
+                # Still save progress so we don't re-paginate these
+                progress[str(fid)] = count
+                _save_progress(output_dir, progress)
                 continue
 
             # Write note to disk immediately
@@ -157,17 +185,37 @@ def run_both(client, folders, output_dir):
                 print(f"\n    error saving {nid}: {exc}", file=sys.stderr)
                 errors += 1
 
+            # Save progress after each note
+            progress[str(fid)] = count
+            _save_progress(output_dir, progress)
+
             print(f"\r    {fname}: {count}/{fcount}", end="", flush=True)
         print(f"\r    {fname}: {count} note(s)" + " " * 30)
 
-    # Write URL files
+        # Mark folder complete
+        progress[str(fid)] = "done"
+        _save_progress(output_dir, progress)
+
+    # Write URL files (appending to any existing list)
+    existing_entries = []
+    if os.path.exists(json_path):
+        with open(json_path, encoding="utf-8") as f:
+            existing_entries = json.load(f)
+    # Merge: existing entries + new entries, dedup by note_id
+    seen = set()
+    merged = []
+    for e in existing_entries + entries:
+        if e["note_id"] not in seen:
+            seen.add(e["note_id"])
+            merged.append(e)
+
     with open(urls_path, "w", encoding="utf-8") as f:
-        for e in entries:
+        for e in merged:
             f.write(f"{e['url']}\n")
     with open(json_path, "w", encoding="utf-8") as f:
-        json.dump(entries, f, indent=2, ensure_ascii=False)
+        json.dump(merged, f, indent=2, ensure_ascii=False)
 
-    print(f"\n{len(entries)} note(s) total. {saved} new, {skipped} already on disk, {errors} error(s).")
+    print(f"\n{len(merged)} note(s) total. {saved} new, {skipped} already on disk, {errors} error(s).")
     print(f"  URLs  -> {urls_path}")
     print(f"  JSON  -> {json_path}")
     print(f"  Notes -> {notes_dir}")
@@ -304,7 +352,11 @@ def main():
         print("No folders to scrape.", file=sys.stderr)
         sys.exit(1)
 
-    print(f"Scraping {len(folders)} folder(s)...\n")
+    total = sum(f.get("count", 0) for f in folders if isinstance(f.get("count"), int))
+    print(f"Scraping {len(folders)} folder(s) ({total} notes):")
+    for f in folders:
+        print(f"  - {f['title']}: {f.get('count', '?')}")
+    print()
 
     if args.mode == "both":
         # Single pass: paginate once, write both URL list and per-note JSON files
