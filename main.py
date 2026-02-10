@@ -176,6 +176,7 @@ def run_both(client, folders, output_dir):
             print(f"[{fi}/{num_folders}] {fname} ({fcount} notes)")
 
         count = start_offset
+        consecutive_errors = 0
         for note in client.iter_notes(folder_id=fid, start_offset=start_offset):
             nid = note["noteId"]
             count += 1
@@ -195,6 +196,7 @@ def run_both(client, folders, output_dir):
             note_path = os.path.join(notes_dir, f"{nid}.json")
             if os.path.exists(note_path) and _is_full_note(note_path):
                 skipped += 1
+                consecutive_errors = 0
                 print(f"\r    {count}/{fcount} (already have full note)", end="", flush=True)
                 progress[str(fid)] = count
                 _save_progress(output_dir, progress)
@@ -206,11 +208,25 @@ def run_both(client, folders, output_dir):
                 full_note["_full"] = True  # marker so we know this is complete
                 full_note["_folder"] = fname
                 full_note["_folder_id"] = fid
+                consecutive_errors = 0
             except Exception as exc:
                 print(f"\n    error fetching {nid}: {exc}", file=sys.stderr)
                 errors += 1
+                consecutive_errors += 1
                 progress[str(fid)] = count
                 _save_progress(output_dir, progress)
+                if consecutive_errors >= 5:
+                    print(
+                        "\n    5 consecutive fetch errors — the per-note endpoint may be wrong.\n"
+                        "    Stopping. Saved notes from list endpoint as fallback.",
+                        file=sys.stderr,
+                    )
+                    # Save what we have from the list as fallback
+                    fallback_path = os.path.join(notes_dir, f"{nid}.json")
+                    if not os.path.exists(fallback_path):
+                        with open(fallback_path, "w", encoding="utf-8") as f:
+                            json.dump(note, f, indent=2, ensure_ascii=False)
+                    break
                 continue
 
             # Write full note to disk
@@ -280,6 +296,7 @@ def run_extract(client, folders, output_dir):
         print(f"[{fi}/{num_folders}] {fname} ({fcount} notes)")
 
         count = 0
+        consecutive_errors = 0
         for note in client.iter_notes(folder_id=fid):
             nid = note["noteId"]
             count += 1
@@ -287,6 +304,7 @@ def run_extract(client, folders, output_dir):
             note_path = os.path.join(notes_dir, f"{nid}.json")
             if os.path.exists(note_path) and _is_full_note(note_path):
                 skipped += 1
+                consecutive_errors = 0
                 print(f"\r    {count}/{fcount} (already have full note)", end="", flush=True)
                 continue
 
@@ -295,9 +313,18 @@ def run_extract(client, folders, output_dir):
                 full_note["_full"] = True
                 full_note["_folder"] = fname
                 full_note["_folder_id"] = fid
+                consecutive_errors = 0
             except Exception as exc:
                 print(f"\n    error fetching {nid}: {exc}", file=sys.stderr)
                 errors += 1
+                consecutive_errors += 1
+                if consecutive_errors >= 5:
+                    print(
+                        "\n    5 consecutive fetch errors — the per-note endpoint may be wrong.\n"
+                        "    Stopping this folder.",
+                        file=sys.stderr,
+                    )
+                    break
                 continue
 
             try:
